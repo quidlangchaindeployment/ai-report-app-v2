@@ -14,6 +14,8 @@ import io
 import json
 import math
 from typing import Any, Dict, List, Optional
+from datetime import datetime
+import subprocess
 
 # pandas はオプショナルに扱う（未導入でもクラッシュしない）
 try:
@@ -25,6 +27,26 @@ except Exception:  # pragma: no cover
 
 
 # ============= 内部ユーティリティ ==================================================
+def _utc_now_iso() -> str:
+    """
+    現在時刻を ISO 8601 形式（例: 2026-03-24T01:23:45Z）で返す
+    """
+    return datetime.utcnow().isoformat() + "Z"
+
+
+def _get_git_sha() -> str:
+    """
+    現在の Git の commit SHA を返す（取得できない場合は 'unknown'）
+    """
+    try:
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            stderr=subprocess.DEVNULL,
+        ).decode("utf-8").strip()
+        return sha
+    except Exception:
+        return "unknown"
+
 
 def _is_dataframe(x: Any) -> bool:
     return _HAS_PANDAS and isinstance(x, pd.DataFrame)  # type: ignore
@@ -171,6 +193,31 @@ def convert_results_to_json_string(results_dict: Dict[str, Any]) -> str:
             payload = _serialize_data_payload(result.get("data"))
             for k, v in payload.items():
                 line[k] = v  # "data" と "note"(任意)
+                
+            # -------------------------------------------------
+            # Addendum v2: audit / explanation schema (empty)
+            # -------------------------------------------------
+            line.update({
+                "analysis_type": "",
+                "question": "",
+                "key_findings": [],
+                "confidence": None,
+                "recommended_slide": False,
+
+                "evidence_ids": [],
+                "evidence_snippets": [],
+                "counter_examples": [],
+                "limitations": [],
+
+                "provenance": {
+                    "prompt_id": "",
+                    "model_id": "",
+                    "parameters": {},
+                    "dataset_hash": "",
+                    "code_version": _get_git_sha(),
+                    "timestamp": _utc_now_iso(),
+                },
+            })
 
             # 画像（Base64）と HTML の扱い
             html_content = result.get("html_content")

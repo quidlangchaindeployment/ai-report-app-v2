@@ -81,7 +81,6 @@ def _init_state():
             st.session_state[k] = v
 
 
-# --- 1) カテゴリ定義の自動生成（LLM有無で分岐） -----------------------------------
 def _ai_generate_categories(analysis_prompt: str) -> Optional[Dict[str, str]]:
     """分析指針から抽出カテゴリのJSON辞書を作る（LLM未移植でも安全に戻る）"""
     if not _HAS_LLM or get_llm is None:
@@ -92,15 +91,17 @@ def _ai_generate_categories(analysis_prompt: str) -> Optional[Dict[str, str]]:
     if llm is None:
         st.error("Gemini クライアントの生成に失敗しました（APIキー未設定など）。")
         return None
-
     prompt = (
-        "あなたはデータ分析のスキーマ設計者です。「分析指針」を読み、"
-        "テキストから抽出するべき「カテゴリ」（キー）と説明（値）を考案してください。\n"
+        "あなたはデータ分析のスキーマ設計者です。\n"
+        "以下の分析指針を読み、テキストから抽出すべきカテゴリを考案してください。\n\n"
         "# 分析指針:\n"
-        f"{analysis_prompt}\n"
-        "# 条件:\n"
-        "- 地名（市区町村）は別途自動処理するため除外\n"
-        "- 出力は厳格なJSON辞書のみ（例：{\"カテゴリ名\": \"説明\", ...}）\n"
+        f"{analysis_prompt}\n\n"
+        "# 指示:\n"
+        "- 出力は JSON 辞書のみ\n"
+        "- 形式: {\"カテゴリ名\": \"説明文\"}\n"
+        "- 値は必ず「人が読める説明文」にする\n"
+        "- 配列やサンプル値は含めない\n"
+        "- 地名（市区町村）は含めない\n"
     )
     try:
         # LangChain 風の .invoke を利用しない直呼び（get_llm の実装に依存）
@@ -116,7 +117,9 @@ def _ai_generate_categories(analysis_prompt: str) -> Optional[Dict[str, str]]:
         if not m:
             st.warning("AI応答からJSONを抽出できませんでした。")
             return None
-        return json.loads(m.group(0).replace("'", '"'))
+        raw_json = json.loads(m.group(0).replace("'", '"'))
+        # --- 自動補正：値が文字列なら配列に変換 ---
+        return raw_json
     except Exception as e:
         st.error(f"カテゴリ自動生成エラー: {e}")
         return None
@@ -391,7 +394,6 @@ def render():
                     if cats:
                         st.session_state["generated_categories"] = cats
                         st.success("カテゴリを生成しました。")
-
         with col_e:
             if st.button("除外ワードをAIで自動生成", disabled=not _HAS_LLM):
                 if not analysis_prompt:
@@ -406,7 +408,7 @@ def render():
             st.subheader("抽出カテゴリ（JSON）")
             edited_cats_str = st.text_area(
                 "カテゴリ定義 (JSON)",
-                value=json.dumps(st.session_state.get("generated_categories", {}), ensure_ascii=False, indent=2),
+                value=json.dumps(st.session_state["generated_categories"], ensure_ascii=False, indent=2),
                 height=220,
                 key="cats_editor",
             )

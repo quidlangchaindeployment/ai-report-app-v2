@@ -41,6 +41,68 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 
+def _ui_error(msg: str):
+    _logger.error(msg)
+    try:
+        import streamlit as st  # 遅延 import
+        st.error(msg)
+    except Exception:
+        pass
+
+def _ui_info(msg: str):
+    _logger.info(msg)
+    try:
+        import streamlit as st
+        st.info(msg)
+    except Exception:
+        pass
+
+# --- プレフライト（ENV / STS / S3 / Bedrock エンドポイント） ---
+from botocore.exceptions import ClientError
+
+def _get_bucket_region(s3_client, bucket: str) -> str:
+    """
+    バケットのリージョンを取得（us-east-1 は None を返す仕様に注意）
+    """
+    try:
+        resp = s3_client.get_bucket_location(Bucket=bucket)
+        loc = resp.get("LocationConstraint")
+        return loc or "us-east-1"
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code")
+        raise RuntimeError(f"S3バケットにアクセスできません: {bucket} ({code})")
+
+def preflight_check():
+    # 必須ENV
+    missing = []
+    for k in ["BEDROCK_S3_INPUT_BUCKET", "BEDROCK_S3_OUTPUT_BUCKET", "BEDROCK_ROLE_ARN", "AWS_DEFAULT_REGION"]:
+        if not os.getenv(k, "").strip():
+            missing.append(k)
+    if missing:
+        raise RuntimeError(f"環境変数が不足しています: {', '.join(missing)}")
+
+    region = _get_region()
+    s3, bedrock = get_aws_clients(region_name=region)
+
+    # 認証情報（STS）確認
+    sts = boto3.client("sts", region_name=region)
+    ident = sts.get_caller_identity()
+    _logger.info(f"STS identity: {ident}")
+
+    # S3 バケット存在 & リージョン検証
+    in_bucket  = os.getenv("BEDROCK_S3_INPUT_BUCKET")
+    out_bucket = os.getenv("BEDROCK_S3_OUTPUT_BUCKET")
+    in_region  = _get_bucket_region(s3, in_bucket)
+    out_region = _get_bucket_region(s3, out_bucket)
+    if in_region != region:
+        raise RuntimeError(f"入力バケットのリージョン不一致: bucket={in_bucket}, bucket_region={in_region}, app_region={region}")
+    if out_region != region:
+        raise RuntimeError(f"出力バケットのリージョン不一致: bucket={out_bucket}, bucket_region={out_region}, app_region={region}")
+
+    # Bedrock エンドポイント疎通（取得できればOK）
+    _logger.info(f"Bedrock endpoint: {bedrock.meta.endpoint_url}")
+
+
 def _get_region() -> str:
     return os.getenv("AWS_DEFAULT_REGION", "us-east-1")
 
@@ -104,40 +166,43 @@ def _require_env(name: str) -> str:
     return v
 
 
+
 def create_batch_job(job_name: str, input_key: str, output_prefix: str) -> Optional[str]:
     """
     Bedrock の「モデル推論ジョブ（バッチ）」を作成。
     - 入力: S3 の JSONL 1ファイル（input_key）
     - 出力: S3 のプレフィックス（output_prefix）配下に .out が作成される
     返り値: jobArn（失敗時は None）
-
-    必須の環境変数:
-      - BEDROCK_S3_INPUT_BUCKET
-      - BEDROCK_S3_OUTPUT_BUCKET
-      - BEDROCK_ROLE_ARN
-    任意:
-      - BEDROCK_MODEL_ID（未設定時 "amazon.nova-lite-v1:0"）
+    必須ENV: BEDROCK_S3_INPUT_BUCKET / BEDROCK_S3_OUTPUT_BUCKET / BEDROCK_ROLE_ARN / AWS_DEFAULT_REGION
+    任意ENV: BEDROCK_MODEL_ID（未設定時 "amazon.nova-lite-v1:0"）
     """
     try:
-        input_bucket = _require_env("BEDROCK_S3_INPUT_BUCKET")
+        input_bucket  = _require_env("BEDROCK_S3_INPUT_BUCKET")
         output_bucket = _require_env("BEDROCK_S3_OUTPUT_BUCKET")
-        role_arn = _require_env("BEDROCK_ROLE_ARN")
+        role_arn      = _require_env("BEDROCK_ROLE_ARN")
     except RuntimeError as e:
-        _logger.error(str(e))
+        _ui_error(str(e))
         return None
 
+    region   = _get_region()
     model_id = os.getenv("BEDROCK_MODEL_ID", "amazon.nova-lite-v1:0")
-
-    s3_input_uri = f"s3://{input_bucket}/{input_key}"
+    s3_input_uri  = f"s3://{input_bucket}/{input_key}"
     s3_output_uri = f"s3://{output_bucket}/{output_prefix}".rstrip("/") + "/"
 
+    # --- 追加: プレフライト ---
     try:
-        _, bedrock = get_aws_clients()
+        preflight_check()
+    except Exception as e:
+        _ui_error(f"[Preflight] 失敗: {e}")
+        _ui_info(f"ENV: region={region}, role={role_arn}, input_bucket={input_bucket}, output_bucket={output_bucket}, model_id={model_id}")
+        return None
+
+    try:
+        _, bedrock = get_aws_clients(region_name=region)
         _logger.info(
             f"Creating Bedrock batch job: jobName={job_name}, modelId={model_id}, "
             f"input={s3_input_uri}, output={s3_output_uri}"
         )
-
         resp = bedrock.create_model_invocation_job(
             jobName=job_name,
             roleArn=role_arn,
@@ -145,18 +210,23 @@ def create_batch_job(job_name: str, input_key: str, output_prefix: str) -> Optio
             inputDataConfig={"s3InputDataConfig": {"s3Uri": s3_input_uri}},
             outputDataConfig={"s3OutputDataConfig": {"s3Uri": s3_output_uri}},
         )
-        job_arn = resp.get("jobArn") or resp.get("jobArn".encode(), None)
+        job_arn = resp.get("jobArn")
         if not job_arn:
-            _logger.error(f"create_model_invocation_job: jobArn がレスポンスに存在しません: {resp}")
+            _ui_error(f"create_model_invocation_job: jobArn がレスポンスに存在しません: {resp}")
             return None
 
-        _logger.info(f"Bedrock batch job created: {job_arn}")
+        _ui_info(f"Bedrock batch job created: {job_arn}")
         return job_arn
-    except (ClientError, BotoCoreError) as e:
-        _logger.error(f"Failed to create Bedrock job: {e}")
+
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code")
+        msg  = e.response.get("Error", {}).get("Message")
+        _ui_error(f"[Bedrock] create_model_invocation_job 失敗: {code} - {msg}")
+        _ui_info(f"(context) region={region}, modelId={model_id}, input={s3_input_uri}, output={s3_output_uri}, role={role_arn}")
         return None
-    except Exception as e:
-        _logger.error(f"Unexpected error in create_batch_job: {e}")
+    except (BotoCoreError, Exception) as e:
+        _ui_error(f"[Bedrock] 予期せぬ例外: {e}")
+        _ui_info(f"(context) region={region}, modelId={model_id}, input={s3_input_uri}, output={s3_output_uri}, role={role_arn}")
         return None
 
 
