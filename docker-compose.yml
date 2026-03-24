@@ -1,0 +1,17 @@
+services:
+  app:
+    build:
+      context: . # ← この v2 フォルダをビルドコンテキストに
+      dockerfile: Dockerfile # ← 同フォルダの Dockerfile を使用
+    container_name: data-analysis-app
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env # ← v2 の .env を使う
+    volumes:
+      - ./:/app # ← v2 のソースをコンテナ /app にマウント（編集が反映される）
+    working_dir: /app # ← 作業ディレクトリを /app に固定
+    command: >
+      bash -c "streamlit run app.py --server.address 0.0.0.0 --server.port 8501
+               --browser.gatherUsageStats=false"
+    restart: unless-stopped

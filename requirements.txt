@@ -1,0 +1,16 @@
+# ---- Python 3.11 安定セット（Streamlit 1.33 と互換）----
+streamlit==1.33.0
+
+pandas==2.2.2
+numpy==1.26.4
+matplotlib==3.8.4
+
+networkx==3.2.1
+pyvis==0.3.2
+spacy==3.8.11
+wordcloud==1.9.6
+python-pptx==0.6.23
+openpyxl==3.1.2
+boto3==1.34.30
+python-dotenv==1.0.1
+langchain-google-genai==1.0.3
