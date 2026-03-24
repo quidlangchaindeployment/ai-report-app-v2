@@ -3,11 +3,15 @@
 # ==================================================
 .env
 .env.*
+!.env.example
 .envrc
 credentials.json
 *.pem
 *.key
-.streamlit/secrets.toml
+.streamlit/
+!.streamlit/
+!.streamlit/secrets.toml
+
 
 # ==================================================
 # Python / Virtual Environments
