@@ -5,9 +5,9 @@ import asyncio
 import streamlit as st
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-# ✅ browser-use 最新版のみを前提（0.12.x対応）
 try:
-    from browser_use import Agent, Browser, BrowserConfig
+    from browser_use import Agent
+    from browser_use.browser.browser import Browser, BrowserConfig
 except ImportError as e:
     st.error(
         "browser-use のインポートに失敗しました。Docker環境で pip install browser-use が実行されているか確認してください。"
@@ -29,7 +29,7 @@ async def run_quid_metrics_agent(topic_name: str):
         # ✅ 1. Browser設定
         browser = Browser(
             config=BrowserConfig(
-                headless=True if is_docker else False,  # Dockerでは必須
+                headless=True if is_docker else False,  # Dockerでは画面なし必須
                 disable_security=True,
                 user_data_dir="./tmp/quid_profile"
             )
@@ -41,7 +41,7 @@ async def run_quid_metrics_agent(topic_name: str):
             api_key=os.getenv("GOOGLE_API_KEY")
         )
 
-        # ✅ 3. タスク（元コード維持）
+        # ✅ 3. タスク
         task_description = f"""
         1. QUID Monitor (https://monitor.quid.com/) にアクセスしてください。
         2. ログインが必要な場合は、ユーザーがログインを完了するまで待機してください。
@@ -64,7 +64,7 @@ async def run_quid_metrics_agent(topic_name: str):
             browser=browser
         )
 
-        # ✅ 5. 実行（元処理維持）
+        # ✅ 5. 実行
         history = await agent.run(max_steps=20)
 
         # ✅ 安全に結果取得（null対策）

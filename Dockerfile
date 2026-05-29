@@ -15,7 +15,7 @@ RUN mkdir -p /app/.streamlit && printf "" > /app/.streamlit/secrets.toml
 RUN apt-get update && apt-get install -y wget gnupg && rm -rf /var/lib/apt/lists/*
 RUN playwright install chromium
 RUN playwright install-deps chromium
-
+RUN pip install browser-use
 # アプリ本体
 COPY . /app
 
