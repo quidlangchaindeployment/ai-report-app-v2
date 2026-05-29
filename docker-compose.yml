@@ -1,17 +1,18 @@
 services:
   app:
-    build:
-      context: . # ← この v2 フォルダをビルドコンテキストに
-      dockerfile: Dockerfile # ← 同フォルダの Dockerfile を使用
-    container_name: data-analysis-app
+    build: .
     ports:
       - "8501:8501"
     env_file:
-      - .env # ← v2 の .env を使う
-    volumes:
-      - ./:/app # ← v2 のソースをコンテナ /app にマウント（編集が反映される）
-    working_dir: /app # ← 作業ディレクトリを /app に固定
+      - .env
+    environment:
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      BEDROCK_S3_INPUT_BUCKET: ${BEDROCK_S3_INPUT_BUCKET}
+      BEDROCK_S3_OUTPUT_BUCKET: ${BEDROCK_S3_OUTPUT_BUCKET}
+      BEDROCK_ROLE_ARN: ${BEDROCK_ROLE_ARN}
+    # volumes:
+    #   - ./:/app  # ← 開発時は便利ですが、コンテナ内の site-packages と衝突しないように注意
     command: >
-      bash -c "streamlit run app.py --server.address 0.0.0.0 --server.port 8501
-               --browser.gatherUsageStats=false"
-    restart: unless-stopped
+      streamlit run app.py
+      --server.port=8501
+      --server.address=0.0.0.0

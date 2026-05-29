@@ -1,20 +1,23 @@
 FROM python:3.11-slim
 
-# システム依存が必要なら適宜追加（例：git, build-essential など）
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential && \
-    rm -rf /var/lib/apt/lists/*
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# 先に依存だけをコピー→インストール（レイヤーキャッシュ最適化）
+# 依存だけ先に入れてレイヤキャッシュを効かせる
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -U pip setuptools wheel \
+ && pip install --no-cache-dir -r requirements.txt
 
-# 残りのソース
+# “No secrets files found” の赤帯を消すための空ファイル
+RUN mkdir -p /app/.streamlit && printf "" > /app/.streamlit/secrets.toml
+RUN apt-get update && apt-get install -y wget gnupg && rm -rf /var/lib/apt/lists/*
+RUN playwright install chromium
+RUN playwright install-deps chromium
+
+# アプリ本体
 COPY . /app
 
 EXPOSE 8501
-
-# compose 側で command を上書きするため、ここはダミーでもOK
 CMD ["streamlit", "run", "app.py", "--server.address", "0.0.0.0", "--server.port", "8501"]
