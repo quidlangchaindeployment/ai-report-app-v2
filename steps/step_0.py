@@ -1,9 +1,13 @@
 # steps/step_0.py
-import streamlit as st
+# --- Step 0: 戦略設計 (Design) ---
 import json
 import re
 from datetime import datetime, timedelta
-from services.llm import get_llm
+
+import streamlit as st
+
+# --- 共通ユーティリティへの依存 ---
+from utils.dependencies import HAS_LLM, get_llm
 
 def _robust_json_parser(text: str) -> dict:
     """不完全なJSONやMarkdown装飾を修復してパースする"""
@@ -29,18 +33,16 @@ def render():
 
     # --- Section 1: ユーザー指定項目 ---
     with st.container():
-        st.subheader("1. 分析要件の設定")
+        st.subheader("1) 分析要件の設定")
         col_bg, col_pur = st.columns(2)
         background = col_bg.text_area("分析の背景", height=120, key="input_bg", placeholder="例：○○県の観光に関して、ソーシャル上の観光客の評価を取得できておらず...")
         purpose = col_pur.text_area("分析の目的", height=120, key="input_pur", placeholder="例：特定の観光エリアでの購買行動やルートを可視化し...")
 
         col_date, col_lang = st.columns(2)
-        # 期間選択 
         today = datetime.now()
         default_start = today - timedelta(days=30)
         date_range = col_date.date_input("分析期間の設定", value=(default_start, today))
         
-        # 言語選択（複数選択） [cite: 1220, 1333, 2451]
         languages = col_lang.multiselect(
             "対象言語の選択",
             ["日本語", "英語", "中国語（簡体字）", "中国語（繁体字）", "韓国語", "フランス語", "ドイツ語", "スペイン語"],
@@ -48,7 +50,7 @@ def render():
         )
 
     st.markdown("---")
-    st.subheader("2. AI生成オプション")
+    st.subheader("2) AI生成オプション")
     model_mapping = {
         "Gemini 2.5 Flash (推奨)": "gemini-2.5-flash",
         "Gemini 2.5 Flash Lite": "gemini-2.5-flash-lite"
@@ -56,7 +58,7 @@ def render():
     selected_label = st.selectbox("使用するモデル", list(model_mapping.keys()))
     valid_model_id = model_mapping[selected_label]
 
-    if st.button("🪄 高精度な抽出条件を生成する", type="primary"):
+    if st.button("🪄 高精度な抽出条件を生成する", type="primary", disabled=not HAS_LLM):
         if not background or not purpose or len(date_range) < 2 or not languages:
             st.warning("全ての項目を入力・選択してください。")
             return
@@ -67,7 +69,6 @@ def render():
 
         llm = get_llm(model_name=valid_model_id, temperature=0.1, max_output_tokens=1000)
         
-        # マニュアルを反映した高精度プロンプト [cite: 566, 1362, 1376, 1479]
         prompt = f"""
         あなたはQUID Monitorを使いこなすSNSアナリストです。
         提供された要件に基づき、データのノイズを最小化し、分析精度を最大化する設定JSONを作成してください。
@@ -78,14 +79,12 @@ def render():
         【言語】: {lang_str}
 
         ## キーワード生成の厳格な役割分担:
-        1. **主要キーワード (main_keywords)**: 
-           - センチメント判定の核となる語。日英で5-10個に厳選。
-        2. **含めるキーワード (include_keywords)**: 
-           - 母集団を絞り込むための地域名や必須文脈語（AND条件）。
+        1. **主要キーワード (main_keywords)**: センチメント判定の核となる語。日英で5-10個に厳選。
+        2. **含めるキーワード (include_keywords)**: 母集団を絞り込むための地域名や必須文脈語（AND条件）。
         3. **除外キーワード (exclude_keywords)**: 
            - **数は30個以内を厳守**。
-           - 短すぎる語（例：イラン、タイ、アップル）は、部分一致により「ハイランド」「タイランド」「アップルパイ」など必要なデータまで消すリスクがあるため、単体での除外は禁止。
-           - 代わりに「富士急ハイランド」「タイランド銀行」「Israel Premier Tech」など、具体的で紛らわしい固有名詞やキャンペーン語（抽選、当たる、ギフト券）を指定すること。
+           - 短すぎる語（例：イラン、タイ、アップル）は、部分一致により「ハイランド」等まで消すリスクがあるため禁止。
+           - 代わりに「富士急ハイランド」「タイランド銀行」など、具体的で紛らわしい固有名詞やキャンペーン語（抽選、当たる、ギフト券）を指定すること。
 
         ## 出力形式 (純粋なJSONのみ):
         {{
@@ -108,13 +107,12 @@ def render():
 
         with st.spinner("アナリストエージェントが戦略を策定中..."):
             try:
-                res = llm.invoke(prompt)
+                res = llm.invoke(prompt) if hasattr(llm, 'invoke') else llm.predict(prompt)
                 extracted_json = _robust_json_parser(res)
                 st.session_state["research_design"] = extracted_json
-                st.success("高精度な設計案が完成しました。")
+                st.success("高精度な設計案が完成しました。下部で最終調整を行ってください。")
             except Exception as e:
                 st.error(f"生成エラー: {str(e)}")
-                with st.expander("デバッグ情報"): st.code(res if 'res' in locals() else "応答なし")
 
     # --- Section 3: プレビュー・調整 ---
     if st.session_state.get("research_design"):
@@ -122,7 +120,7 @@ def render():
         design = st.session_state["research_design"]
         tc = design.get("topic_creation", {})
         
-        st.subheader("3. 最終調整（QUID設定画面へ転記）")
+        st.subheader("3) 最終調整（QUID設定画面へ転記）")
         with st.form("precision_form_v8"):
             topic_name = st.text_input("トピック名", value=tc.get("topic_name", ""))
             
@@ -148,5 +146,6 @@ def render():
                     "include_keywords": [s.strip() for s in ik.split(",") if s.strip()],
                     "exclude_keywords": [s.strip() for s in ek.split(",") if s.strip()]
                 }
+                # Step 1へ自動遷移
                 st.session_state["current_step"] = 1
                 st.rerun()
