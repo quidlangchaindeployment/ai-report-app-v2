@@ -10,8 +10,8 @@ services:
       BEDROCK_S3_INPUT_BUCKET: ${BEDROCK_S3_INPUT_BUCKET}
       BEDROCK_S3_OUTPUT_BUCKET: ${BEDROCK_S3_OUTPUT_BUCKET}
       BEDROCK_ROLE_ARN: ${BEDROCK_ROLE_ARN}
-    # volumes:
-    #   - ./:/app  # ← 開発時は便利ですが、コンテナ内の site-packages と衝突しないように注意
+    volumes:
+      - ./:/app
     command: >
       streamlit run app.py
       --server.port=8501

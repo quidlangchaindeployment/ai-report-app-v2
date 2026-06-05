@@ -31,8 +31,8 @@ def render():
     with st.container():
         st.subheader("1. 分析要件の設定")
         col_bg, col_pur = st.columns(2)
-        background = col_bg.text_area("分析の背景", height=120, key="input_bg", placeholder="例：中東情勢による国内経済への影響...")
-        purpose = col_pur.text_area("分析の目的", height=120, key="input_pur", placeholder="例：特定地域でのブランド認識の比較...")
+        background = col_bg.text_area("分析の背景", height=120, key="input_bg", placeholder="例：○○県の観光に関して、ソーシャル上の観光客の評価を取得できておらず...")
+        purpose = col_pur.text_area("分析の目的", height=120, key="input_pur", placeholder="例：特定の観光エリアでの購買行動やルートを可視化し...")
 
         col_date, col_lang = st.columns(2)
         # 期間選択 

@@ -66,13 +66,7 @@ def main() -> None:
             if st.button("🧹 セッションを初期化", use_container_width=True):
                 st.session_state.clear()
                 st.rerun()
-            
-            # 開発用：現在の状態確認（必要に応じて表示）
-            # st.write("Step:", st.session_state.current_step)
-            # st.write("Design Loaded:", st.session_state.research_design is not None)
-
-    # --- ページ本体の切り替えロジック ---
-    
+ 
     # 0. 戦略設計
     if selected_label.startswith("0"):
         step_0.render()
