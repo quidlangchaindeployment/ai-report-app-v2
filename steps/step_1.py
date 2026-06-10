@@ -34,18 +34,29 @@ def render():
             with st.spinner("エージェントがブラウザを操作中...（必要ならログインしてください）"):
                 try:
                     result = asyncio.run(run_quid_metrics_agent(topic_name))
-                    st.session_state["extracted_metrics"] = result
-                    st.success("✅ 作業が完了しました。")
+                    
+                    # ★修正ポイント：エラー文字列が返ってきた場合はJSONとして扱わずエラー表示する
+                    if isinstance(result, str) and result.startswith("エージェント実行エラー"):
+                        st.error(result)
+                    else:
+                        st.session_state["extracted_metrics"] = result
+                        st.success("✅ 作業が完了しました。")
                 except Exception as e:
-                    st.error(f"エラーが発生しました: {e}")
+                    st.error(f"予期せぬエラーが発生しました: {e}")
 
     with col_action2:
         if st.button("🔄 エージェントを再起動（リトライ）"):
             st.rerun()
             
     # 結果の表示と次のステップへの導線
-    if st.session_state.get("extracted_metrics"):
-        st.json(st.session_state["extracted_metrics"])
+    metrics = st.session_state.get("extracted_metrics")
+    if metrics:
+        # 辞書などのデータ形式の場合のみJSONとして表示する（クラッシュ防止）
+        if isinstance(metrics, (dict, list)):
+            st.json(metrics)
+        else:
+            st.write(metrics)
+            
         if st.button("✅ 次のステップ (AWS Bedrock構造化) へ進む"):
             st.session_state["current_step"] = 2
             st.rerun()

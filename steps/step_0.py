@@ -10,22 +10,39 @@ import streamlit as st
 from utils.dependencies import HAS_LLM, get_llm
 
 def _robust_json_parser(text: str) -> dict:
-    """不完全なJSONやMarkdown装飾を修復してパースする"""
-    if not text: raise ValueError("AIからの回答が空です。")
-    text = re.sub(r'```json\s*|\s*```', '', text).strip()
-    start_idx = text.find('{')
-    if start_idx == -1: raise ValueError("JSONの開始点が見つかりません。")
-    text = text[start_idx:]
-    if text.count('"') % 2 != 0: text += '"'
-    open_braces, close_braces = text.count('{'), text.count('}')
-    if open_braces > close_braces: text += '}' * (open_braces - close_braces)
+    """AI特有の省略やノイズを検知・自動修復してJSONを抽出する最強のパーサー"""
+    if not text: 
+        raise ValueError("AIからの回答が空です。")
+    
+    clean_text = text.strip()
+    
+    # Markdownのコードブロック記号を確実に削除
+    clean_text = re.sub(r'^`{3}(?:json)?|`{3}$', '', clean_text, flags=re.MULTILINE).strip()
+    
+    start_idx = clean_text.find('{')
+    end_idx = clean_text.rfind('}')
+    
+    if start_idx == -1 and end_idx == -1:
+        raise ValueError(f"AIがJSON形式で回答しませんでした。\n【AIの出力】\n{clean_text}")
+    
+    if start_idx == -1:
+        # AIが気を利かせて冒頭の { を省略してしまった場合、強引に補完する
+        clean_text = "{" + clean_text
+        start_idx = 0
+        
+    if end_idx == -1:
+        # AIの出力が文字数制限などで途切れている場合
+        raise ValueError(f"AIの出力が途中で途切れています（終了記号がありません）。\n【AIの出力】\n{clean_text}")
+    
+    json_str = clean_text[start_idx:end_idx+1]
+    
+    # よくあるエラー（末尾の不要なカンマ）を自動削除
+    json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
+    
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        try:
-            text = re.sub(r',\s*([}\]])', r'\1', text)
-            return json.loads(text)
-        except: raise ValueError("JSON復旧に失敗しました。AIの回答が長すぎた可能性があります。")
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"JSONパースエラー。AIの出力形式が不正でした。\n詳細: {e}\n【抽出テキスト】\n{json_str[:200]}...")
 
 def render():
     st.title("📋 Step 0: 戦略・リサーチ設計")
@@ -35,8 +52,21 @@ def render():
     with st.container():
         st.subheader("1) 分析要件の設定")
         col_bg, col_pur = st.columns(2)
-        background = col_bg.text_area("分析の背景", height=120, key="input_bg", placeholder="例：○○県の観光に関して、ソーシャル上の観光客の評価を取得できておらず...")
-        purpose = col_pur.text_area("分析の目的", height=120, key="input_pur", placeholder="例：特定の観光エリアでの購買行動やルートを可視化し...")
+        
+        background = col_bg.text_area(
+            "分析の背景 (最大400文字)", 
+            height=120, 
+            max_chars=400, 
+            key="input_bg", 
+            placeholder="例：○○県の観光に関して、ソーシャル上の観光客の評価を取得できておらず..."
+        )
+        purpose = col_pur.text_area(
+            "分析の目的 (最大400文字)", 
+            height=120, 
+            max_chars=400, 
+            key="input_pur", 
+            placeholder="例：特定の観光エリアでの購買行動やルートを可視化し..."
+        )
 
         col_date, col_lang = st.columns(2)
         today = datetime.now()
@@ -50,9 +80,11 @@ def render():
         )
 
     st.markdown("---")
-    st.subheader("2) AI生成オプション")
+    st.subheader("2) AI生成オプション (v2)")
+    
+    # ★変更点: 挙動が安定している Lite 系モデルのみに限定
     model_mapping = {
-        "Gemini 2.5 Flash (推奨)": "gemini-2.5-flash",
+        "Gemini 3.1 Flash Lite (推奨)": "gemini-3.1-flash-lite",
         "Gemini 2.5 Flash Lite": "gemini-2.5-flash-lite"
     }
     selected_label = st.selectbox("使用するモデル", list(model_mapping.keys()))
@@ -67,52 +99,56 @@ def render():
         end_date = date_range[1].strftime("%Y-%m-%d")
         lang_str = ", ".join(languages)
 
-        llm = get_llm(model_name=valid_model_id, temperature=0.1, max_output_tokens=1000)
+        llm = get_llm(model_name=valid_model_id, temperature=0.1, max_output_tokens=2048)
         
         prompt = f"""
         あなたはQUID Monitorを使いこなすSNSアナリストです。
         提供された要件に基づき、データのノイズを最小化し、分析精度を最大化する設定JSONを作成してください。
 
-        【背景】: {background}
-        【目的】: {purpose}
-        【期間】: {start_date} から {end_date}
-        【言語】: {lang_str}
+        【要件】
+        背景: {background}
+        目的: {purpose}
+        期間: {start_date} から {end_date}
+        言語: {lang_str}
 
-        ## キーワード生成の厳格な役割分担:
-        1. **主要キーワード (main_keywords)**: センチメント判定の核となる語。日英で5-10個に厳選。
-        2. **含めるキーワード (include_keywords)**: 母集団を絞り込むための地域名や必須文脈語（AND条件）。
-        3. **除外キーワード (exclude_keywords)**: 
-           - **数は30個以内を厳守**。
-           - 短すぎる語（例：イラン、タイ、アップル）は、部分一致により「ハイランド」等まで消すリスクがあるため禁止。
-           - 代わりに「富士急ハイランド」「タイランド銀行」など、具体的で紛らわしい固有名詞やキャンペーン語（抽選、当たる、ギフト券）を指定すること。
+        【キーワード生成の厳格なルール】
+        1. main_keywords: センチメント判定の核となる語。日英で5-10個に厳選。
+        2. include_keywords: 母集団を絞り込むための地域名や必須文脈語。最大10個。
+        3. exclude_keywords: 最大30個を厳守。短すぎる語は禁止。具体的で紛らわしい固有名詞を指定すること。
 
-        ## 出力形式 (純粋なJSONのみ):
+        【出力形式】
+        必ず全体のJSONオブジェクトを最初から最後まで出力してください。省略は絶対に許されません。
+        以下の構造に必ず従い、JSON形式のみを出力してください。
         {{
           "topic_creation": {{
-            "topic_name": "Project_YYYYMMDD",
+            "topic_name": "Project_YYYYMMDD_任意の英数字",
             "start_date": "{start_date}",
             "end_date": "{end_date}",
             "language": "{lang_str}",
-            "main_keywords": [],
-            "include_keywords": [],
-            "exclude_keywords": [],
+            "main_keywords": ["キーワード1", "キーワード2"],
+            "include_keywords": ["キーワード3"],
+            "exclude_keywords": ["除外1", "除外2"],
             "search_range": "パラグラフ内での一致"
           }},
           "analysis_strategy": {{
             "methods": ["投稿量推移", "センチメント分析", "StoryScope属性分析"],
-            "insight_hypothesis": "100文字程度の仮説"
+            "insight_hypothesis": "ここに100文字以内の簡潔な仮説を記述"
           }}
         }}
         """
 
         with st.spinner("アナリストエージェントが戦略を策定中..."):
             try:
-                res = llm.invoke(prompt) if hasattr(llm, 'invoke') else llm.predict(prompt)
-                extracted_json = _robust_json_parser(res)
+                raw_response = llm.invoke(prompt) if hasattr(llm, 'invoke') else llm.predict(prompt)
+                res_text = getattr(raw_response, 'content', str(raw_response))
+                
+                extracted_json = _robust_json_parser(res_text)
                 st.session_state["research_design"] = extracted_json
                 st.success("高精度な設計案が完成しました。下部で最終調整を行ってください。")
             except Exception as e:
                 st.error(f"生成エラー: {str(e)}")
+                with st.expander("デバッグ情報 (AIの生出力)", expanded=True):
+                    st.code(getattr(raw_response, 'content', str(raw_response)) if 'raw_response' in locals() else "応答なし")
 
     # --- Section 3: プレビュー・調整 ---
     if st.session_state.get("research_design"):
@@ -146,6 +182,5 @@ def render():
                     "include_keywords": [s.strip() for s in ik.split(",") if s.strip()],
                     "exclude_keywords": [s.strip() for s in ek.split(",") if s.strip()]
                 }
-                # Step 1へ自動遷移
                 st.session_state["current_step"] = 1
                 st.rerun()
